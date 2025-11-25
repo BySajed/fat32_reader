@@ -1,0 +1,19 @@
+# --- Rust Standard ---
+/target
+Cargo.lock
+**/*.rs.bk
+
+# --- Ton Projet FAT32 ---
+# On ignore les images disques générées
+*.img
+*.iso
+
+# On ignore le point de montage temporaire
+mnt_test/
+mnt_point/
+
+# --- IDE (Optionnel) ---
+.vscode/
+.idea/
+.DS_Store
+*.sh
