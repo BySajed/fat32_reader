@@ -55,3 +55,26 @@ impl Fat32Image {
         Ok(Fat32Image { file, boot_sector })
     }
 }
+
+fn main() -> io::Result<()> {
+    let image_path = "fat32.img";
+
+    println!("Reading FAT32 image from: {}", image_path);
+
+    match Fat32Image::new(image_path) {
+        Ok(fs) => {
+            println!("Success reading FAT32 image!");
+            println!("----------------------------");
+            println!("Bytes per Sector:         {}", fs.boot_sector.bytes_per_sector);
+            println!("Sectors per Cluster:      {}", fs.boot_sector.sectors_per_cluster);
+            println!("Reserved Sectors:         {}", fs.boot_sector.reserved_sector);
+            println!("Number of FATs:           {}", fs.boot_sector.number_of_fats);
+            println!("Sectors per FAT:          {}", fs.boot_sector.sectors_per_fat);
+            println!("Root Directory Cluster:   {}", fs.boot_sector.root_dir_cluster);
+        }
+        Err(e) => {
+            eprintln!("Error reading FAT32 image: {}", e);
+        }
+    }
+    Ok(())
+}
