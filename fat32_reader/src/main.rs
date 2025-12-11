@@ -131,25 +131,38 @@ impl Fat32Image {
     }
 }
 
+fn format_name(bytes: &[u8; 11]) -> String {
+    //1. Separate name (8 bytes) and extension (3 bytes)
+    let name_part = &bytes[0..8];
+    let ext_part = &bytes[8..11];
+
+    //2. Transform into String and cut empty space
+    let name_str = String::from_utf8_lossy(name_part).trim().to_string();
+    let ext_str = String::from_utf8_lossy(ext_part).trim().to_string();
+
+    //3. Assemble. If no extension, return name only
+    if ext_str.is_empty() {
+        name_str.to_lowercase()
+    }else {
+        format!("{}.{}", name_str, ext_str).to_lowercase()
+    }
+}
+
 fn main() -> io::Result<()> {
     let image_path = "fat32.img";
 
     println!("Reading FAT32 image from: {}", image_path);
 
-    match Fat32Image::new(image_path) {
-        Ok(fs) => {
-            println!("Success reading FAT32 image!");
-            println!("----------------------------");
-            println!("Bytes per Sector:         {}", fs.boot_sector.bytes_per_sector);
-            println!("Sectors per Cluster:      {}", fs.boot_sector.sectors_per_cluster);
-            println!("Reserved Sectors:         {}", fs.boot_sector.reserved_sector);
-            println!("Number of FATs:           {}", fs.boot_sector.number_of_fats);
-            println!("Sectors per FAT:          {}", fs.boot_sector.sectors_per_fat);
-            println!("Root Directory Cluster:   {}", fs.boot_sector.root_dir_cluster);
+match Fat32Image::new(image_path) {
+        Ok(mut fs) => {
+            println!("Image chargée.");
+            
+            let root_cluster = fs.boot_sector.root_dir_cluster;
+            
+            fs.list_directory(root_cluster)?;
         }
-        Err(e) => {
-            eprintln!("Error reading FAT32 image: {}", e);
-        }
+        Err(e) => eprintln!("Erreur : {}", e),
     }
+
     Ok(())
 }
