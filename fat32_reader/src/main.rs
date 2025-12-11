@@ -1,5 +1,5 @@
 use std::fs::File;
-use std::io::{self, Read, Seek, SeekFrom};
+use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::Path;
 use byteorder::{LittleEndian, ReadBytesExt};
 
@@ -139,19 +139,45 @@ fn format_name(bytes: &[u8; 11]) -> String {
 }
 
 fn main() -> io::Result<()> {
-    let image_path = "fat32.img";
-
-    println!("Reading FAT32 image from: {}", image_path);
-
-match Fat32Image::new(image_path) {
-        Ok(mut fs) => {
-            println!("Image chargée.");
-            
-            let root_cluster = fs.boot_sector.root_dir_cluster;
-            
-            fs.list_directory(root_cluster)?;
+    let image_path = "fat32.img"; 
+    
+    let mut fs = match Fat32Image::new(image_path) {
+        Ok(img) => img,
+        Err(e) => {
+            eprintln!("Critical error : {}", e);
+            return Ok(());
         }
-        Err(e) => eprintln!("Erreur : {}", e),
+    };
+
+    println!("Welcome in FAT32 Reader !");
+    println!("Available commands : ls, exit");
+
+    let current_cluster = fs.boot_sector.root_dir_cluster;
+
+    loop {
+        print!("> ");
+        io::stdout().flush()?;
+
+        let mut input = String::new();
+        io::stdin().read_line(&mut input)?;
+        
+        let command = input.trim();
+
+        match command {
+            "ls" => {
+                if let Err(e) = fs.list_directory(current_cluster) {
+                    eprintln!("Error in listing : {}", e);
+                }
+            }
+            "exit" | "quit" => {
+                println!("Goodbye !");
+                break;
+            }
+            "" => {}
+            _ => {
+                println!("Unknown command : '{}'", command);
+            }
+        }
     }
 
     Ok(())
