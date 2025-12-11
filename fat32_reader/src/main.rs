@@ -18,6 +18,14 @@ pub struct Fat32Image {
     pub boot_sector: BootSector,
 }
 
+pub struct DirectoryEntry {
+    pub name: [u8; 11],     //Name
+    pub attributes: u8,     //Folder or File
+    pub cluster_high: u16,  //Top address of cluster
+    pub cluster_low: u16,   //Bottom address of cluster
+    pub size: u32,          //Size of file (bytes)
+}
+
 impl Fat32Image {
     pub fn new<P: AsRef<Path>>(path: P) -> io::Result<Self> {
         let mut file = File::open(path)?;
@@ -53,6 +61,20 @@ impl Fat32Image {
         };
 
         Ok(Fat32Image { file, boot_sector })
+    }
+
+    pub fn offset_from_cluster(&self, cluster: u32) -> u64 {
+        // 1. Calculate where start data
+        let first_data_sector = self.boot_sector.reserved_sectors as u64
+            + (self.boot_sector.number_of_fats as u64 * self.boot_sector.sectors_per_fat as u64);
+        
+        // 2. Calculate how much sectors we should pass
+        let cluster_offset = (cluster as u64 - 2) * self.boot_sector.sectors_per_cluster as u64;
+
+        // 3. Add total and multiply by sector size
+        let total_sectors = first_data_sector + cluster_offset;
+
+        total_sectors * self.boot_sector.bytes_per_sector as u64
     }
 }
 
