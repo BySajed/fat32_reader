@@ -65,7 +65,7 @@ impl Fat32Image {
 
     pub fn offset_from_cluster(&self, cluster: u32) -> u64 {
         // 1. Calculate where start data
-        let first_data_sector = self.boot_sector.reserved_sectors as u64
+        let first_data_sector = self.boot_sector.reserved_sector as u64
             + (self.boot_sector.number_of_fats as u64 * self.boot_sector.sectors_per_fat as u64);
         
         // 2. Calculate how much sectors we should pass
@@ -75,6 +75,59 @@ impl Fat32Image {
         let total_sectors = first_data_sector + cluster_offset;
 
         total_sectors * self.boot_sector.bytes_per_sector as u64
+    }
+
+    pub fn list_directory(&mut self, cluster: u32) -> io::Result<()> {
+        let offset = self.offset_from_cluster(cluster);
+        self.file.seek(SeekFrom::Start(offset))?;
+
+        println!("Contents of the folder (Cluster {}) :", cluster);
+        println!("-------------------------------------");
+
+        for _ in 0..16 {
+            //1. Read the name
+            let mut name = [0u8; 11];
+            self.file.read_exact(&mut name)?;
+
+            if name[0] == 0 {
+                break;
+            }
+
+            if name[0] == 0xE5 {
+                self.file.seek(SeekFrom::Current(21))?;
+                continue;
+            }
+
+            //2. Read attribute
+            let attr = self.file.read_u8()?;
+
+            self.file.seek(SeekFrom::Current(8))?;
+
+            //3. Read High Cluster
+            let cluster_high = self.file.read_u16::<LittleEndian>()?;
+
+            self.file.seek(SeekFrom::Current(4))?;
+
+            //4. Read Low Cluster
+            let cluster_low = self.file.read_u16::<LittleEndian>()?;
+
+            //5. Read size
+            let size = self.file.read_u32::<LittleEndian>()?;
+
+            //6. Build real name for display (byte -> string)
+            let name_str = String::from_utf8_lossy(&name);
+
+            //Combine high and low cluster
+            let full_cluster = ((cluster_high as u32) << 16) | (cluster_low as u32);
+
+            let is_dir = (attr & 0x10) != 0;
+            let type_str = if is_dir { "<DIR>" } else { "   " };
+
+            if attr != 0x0F {
+                println!("{} {} (Size: {} bytes, Cluster: {})", type_str, name_str, size, full_cluster);
+            }
+        }
+        Ok(())
     }
 }
 
