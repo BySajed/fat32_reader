@@ -84,48 +84,38 @@ impl Fat32Image {
         println!("Contents of the folder (Cluster {}) :", cluster);
         println!("-------------------------------------");
 
-        for _ in 0..16 {
+        for _ in 0..100 {
             //1. Read the name
-            let mut name = [0u8; 11];
-            self.file.read_exact(&mut name)?;
+            let mut entry_bytes = [0u8; 32];
+            self.file.read_exact(&mut entry_bytes)?;
 
-            if name[0] == 0 {
+            if entry_bytes[0] == 0 {
                 break;
             }
 
-            if name[0] == 0xE5 {
-                self.file.seek(SeekFrom::Current(21))?;
+            if entry_bytes[0] == 0xE5 {
                 continue;
             }
 
             //2. Read attribute
-            let attr = self.file.read_u8()?;
-
-            self.file.seek(SeekFrom::Current(8))?;
-
-            //3. Read High Cluster
-            let cluster_high = self.file.read_u16::<LittleEndian>()?;
-
-            self.file.seek(SeekFrom::Current(4))?;
-
-            //4. Read Low Cluster
-            let cluster_low = self.file.read_u16::<LittleEndian>()?;
-
-            //5. Read size
-            let size = self.file.read_u32::<LittleEndian>()?;
-
-            //6. Build real name for display (byte -> string)
-            let name_str = String::from_utf8_lossy(&name);
-
-            //Combine high and low cluster
-            let full_cluster = ((cluster_high as u32) << 16) | (cluster_low as u32);
-
-            let is_dir = (attr & 0x10) != 0;
-            let type_str = if is_dir { "<DIR>" } else { "   " };
-
-            if attr != 0x0F {
-                println!("{} {} (Size: {} bytes, Cluster: {})", type_str, name_str, size, full_cluster);
+            let attr = entry_bytes[11];
+            if attr == 0x0F {
+                continue;
             }
+
+            let raw_name: [u8; 11] = entry_bytes[0..11].try_into().unwrap();
+            let pretty_name = format_name(&raw_name);
+
+            let cluster_hi = u16::from_le_bytes([entry_bytes[20], entry_bytes[21]]);
+            let cluster_lo = u16::from_le_bytes([entry_bytes[26], entry_bytes[27]]);
+            let size = u32::from_le_bytes([entry_bytes[28], entry_bytes[29], entry_bytes[30], entry_bytes[31]]);
+            
+            let full_cluster = ((cluster_hi as u32) << 16) | (cluster_lo as u32);
+            let is_dir = (attr & 0x10) != 0;
+            
+            let type_icon = if is_dir { "📁" } else { "📄" }; // Petites icônes sympas
+
+            println!("{} {:<15} (Taille: {} octets, Cluster: {})", type_icon, pretty_name, size, full_cluster);
         }
         Ok(())
     }
