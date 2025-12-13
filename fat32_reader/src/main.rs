@@ -119,6 +119,62 @@ impl Fat32Image {
         }
         Ok(())
     }
+
+    pub fn cat_file(&mut self, current_cluster: u32, filename: &str) -> io::Result<()> {
+        let offset = self.offset_from_cluster(current_cluster);
+        self.file.seek(SeekFrom::Start(offset))?;
+        
+        for _ in 0..100 {
+            let mut entry_bytes = [0u8; 32];
+            self.file.read_exact(&mut entry_bytes)?;
+
+            if entry_bytes[0] == 0 {
+                break;
+            }
+
+            if entry_bytes[0] == 0xE5 {
+                continue;
+            }
+
+            if entry_bytes[11] == 0x0F {
+                continue;
+            }
+
+            let raw_name: [u8; 11] = entry_bytes[0..11].try_into().unwrap();
+            let name = format_name(&raw_name);
+
+            if name == filename.to_lowercase() {
+                let cluster_hi = u16::from_le_bytes([entry_bytes[20], entry_bytes[21]]);
+                let cluster_lo = u16::from_le_bytes([entry_bytes[26], entry_bytes[27]]);
+                let size = u32::from_le_bytes([entry_bytes[28], entry_bytes[29], entry_bytes[30], entry_bytes[31]]);
+                
+                let target_cluster = ((cluster_hi as u32) << 16) | (cluster_lo as u32);
+
+                let is_dir = (entry_bytes[11] & 0x10) != 0;
+                if is_dir {
+                    println!("Error: '{}' is a directory, cannot display contents.", filename);
+                    return Ok(());
+                }
+
+                let data_offset = self.offset_from_cluster(target_cluster);
+                self.file.seek(SeekFrom::Start(data_offset))?;
+
+                let mut content = vec![0u8; size as usize];
+                self.file.read_exact(&mut content)?;
+
+                let text = String::from_utf8_lossy(&content);
+                println!("Contents of file '{}':", filename);
+                println!("--------------------------------------");
+                println!("{}", text);
+                println!("--------------------------------------");
+
+                return Ok(());
+            }
+        }
+
+        println!("File '{}' not found in current directory.", filename);
+        Ok(())
+    }
 }
 
 fn format_name(bytes: &[u8; 11]) -> String {
