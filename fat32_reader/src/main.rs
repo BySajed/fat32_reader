@@ -175,6 +175,51 @@ impl Fat32Image {
         println!("File '{}' not found in current directory.", filename);
         Ok(())
     }
+
+    pub fn find_sub_directory(&mut self, current_cluster: u32, dir_name: &str) -> io::Result<Option<u32>> {
+        let offset = self.offset_from_cluster(current_cluster);
+        self.file.seek(SeekFrom::Start(offset))?;
+
+        for _ in 0..100 {
+            let mut entry_bytes = [0u8; 32];
+            self.file.read_exact(&mut entry_bytes)?;
+
+            if entry_bytes[0] == 0 {
+                break;
+            }
+
+            if entry_bytes[0] == 0xE5 {
+                continue;
+            }
+
+            if entry_bytes[11] == 0x0F {
+                continue;
+            }
+
+            let raw_name: [u8; 11] = entry_bytes[0..11].try_into().unwrap();
+            let name = format_name(&raw_name);
+
+            if name == dir_name.to_lowercase() {
+                let is_dir = (entry_bytes[11] & 0x10) != 0;
+
+                if is_dir {
+                    let cluster_hi = u16::from_le_bytes([entry_bytes[20], entry_bytes[21]]);
+                    let cluster_lo = u16::from_le_bytes([entry_bytes[26], entry_bytes[27]]);
+                    let mut target_cluster = ((cluster_hi as u32) << 16) | (cluster_lo as u32);
+
+                    if target_cluster == 0 {
+                        target_cluster = 2;
+                    }
+
+                    return Ok(Some(target_cluster));
+                } else {
+                    println!("'{}' is not a directory.", dir_name);
+                    return Ok(None);
+                }
+            }
+    }
+        Ok(None)
+    }
 }
 
 fn format_name(bytes: &[u8; 11]) -> String {
@@ -208,7 +253,7 @@ fn main() -> io::Result<()> {
     println!("Welcome in FAT32 Reader !");
     println!("Available commands : ls, exit");
 
-    let current_cluster = fs.boot_sector.root_dir_cluster;
+    let mut current_cluster = fs.boot_sector.root_dir_cluster;
 
     loop {
         print!("> ");
@@ -226,7 +271,7 @@ fn main() -> io::Result<()> {
         let command = parts[0];
         let argument = if parts.len() > 1 { Some(parts[1]) } else { None };
 
-        match command {
+match command {
             "ls" => {
                 if let Err(e) = fs.list_directory(current_cluster) {
                     eprintln!("Erreur lors du listing : {}", e);
@@ -239,6 +284,22 @@ fn main() -> io::Result<()> {
                     }
                 } else {
                     println!("Usage : cat <nom_fichier>");
+                }
+            }
+            "cd" => {
+                if let Some(dirname) = argument {
+                    match fs.find_sub_directory(current_cluster, dirname) {
+                        Ok(Some(new_cluster)) => {
+                            current_cluster = new_cluster;
+                            println!("Dossier changé. Cluster actuel : {}", current_cluster);
+                        }
+                        Ok(None) => {
+                            println!("Dossier '{}' introuvable.", dirname);
+                        }
+                        Err(e) => eprintln!("Erreur système : {}", e),
+                    }
+                } else {
+                    println!("Usage : cd <nom_dossier>");
                 }
             }
             "exit" | "quit" => {
