@@ -217,21 +217,36 @@ fn main() -> io::Result<()> {
         let mut input = String::new();
         io::stdin().read_line(&mut input)?;
         
-        let command = input.trim();
+        let parts: Vec<&str> = input.trim().split_whitespace().collect();
+
+        if parts.is_empty() {
+            continue;
+        }
+
+        let command = parts[0];
+        let argument = if parts.len() > 1 { Some(parts[1]) } else { None };
 
         match command {
             "ls" => {
                 if let Err(e) = fs.list_directory(current_cluster) {
-                    eprintln!("Error in listing : {}", e);
+                    eprintln!("Erreur lors du listing : {}", e);
+                }
+            }
+            "cat" => {
+                if let Some(filename) = argument {
+                    if let Err(e) = fs.cat_file(current_cluster, filename) {
+                        eprintln!("Erreur de lecture : {}", e);
+                    }
+                } else {
+                    println!("Usage : cat <nom_fichier>");
                 }
             }
             "exit" | "quit" => {
-                println!("Goodbye !");
+                println!("Au revoir !");
                 break;
             }
-            "" => {}
             _ => {
-                println!("Unknown command : '{}'", command);
+                println!("Commande inconnue : '{}'", command);
             }
         }
     }
