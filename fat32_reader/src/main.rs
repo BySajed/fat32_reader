@@ -1,7 +1,7 @@
+use byteorder::{LittleEndian, ReadBytesExt};
 use std::fs::File;
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::Path;
-use byteorder::{LittleEndian, ReadBytesExt};
 
 #[derive(Debug, Clone)]
 pub struct BootSector {
@@ -10,7 +10,7 @@ pub struct BootSector {
     pub reserved_sector: u16,
     pub number_of_fats: u8,
     pub sectors_per_fat: u32,
-    pub root_dir_cluster: u32, 
+    pub root_dir_cluster: u32,
 }
 
 pub struct Fat32Image {
@@ -19,11 +19,11 @@ pub struct Fat32Image {
 }
 
 pub struct DirectoryEntry {
-    pub name: [u8; 11],     //Name
-    pub attributes: u8,     //Folder or File
-    pub cluster_high: u16,  //Top address of cluster
-    pub cluster_low: u16,   //Bottom address of cluster
-    pub size: u32,          //Size of file (bytes)
+    pub name: [u8; 11],    //Name
+    pub attributes: u8,    //Folder or File
+    pub cluster_high: u16, //Top address of cluster
+    pub cluster_low: u16,  //Bottom address of cluster
+    pub size: u32,         //Size of file (bytes)
 }
 
 impl Fat32Image {
@@ -67,7 +67,7 @@ impl Fat32Image {
         // 1. Calculate where start data
         let first_data_sector = self.boot_sector.reserved_sector as u64
             + (self.boot_sector.number_of_fats as u64 * self.boot_sector.sectors_per_fat as u64);
-        
+
         // 2. Calculate how much sectors we should pass
         let cluster_offset = (cluster as u64 - 2) * self.boot_sector.sectors_per_cluster as u64;
 
@@ -108,14 +108,22 @@ impl Fat32Image {
 
             let cluster_hi = u16::from_le_bytes([entry_bytes[20], entry_bytes[21]]);
             let cluster_lo = u16::from_le_bytes([entry_bytes[26], entry_bytes[27]]);
-            let size = u32::from_le_bytes([entry_bytes[28], entry_bytes[29], entry_bytes[30], entry_bytes[31]]);
-            
+            let size = u32::from_le_bytes([
+                entry_bytes[28],
+                entry_bytes[29],
+                entry_bytes[30],
+                entry_bytes[31],
+            ]);
+
             let full_cluster = ((cluster_hi as u32) << 16) | (cluster_lo as u32);
             let is_dir = (attr & 0x10) != 0;
-            
+
             let type_icon = if is_dir { "📁" } else { "📄" }; // Petites icônes sympas
 
-            println!("{} {:<15} (Taille: {} octets, Cluster: {})", type_icon, pretty_name, size, full_cluster);
+            println!(
+                "{} {:<15} (Taille: {} octets, Cluster: {})",
+                type_icon, pretty_name, size, full_cluster
+            );
         }
         Ok(())
     }
@@ -123,7 +131,7 @@ impl Fat32Image {
     pub fn cat_file(&mut self, current_cluster: u32, filename: &str) -> io::Result<()> {
         let offset = self.offset_from_cluster(current_cluster);
         self.file.seek(SeekFrom::Start(offset))?;
-        
+
         for _ in 0..100 {
             let mut entry_bytes = [0u8; 32];
             self.file.read_exact(&mut entry_bytes)?;
@@ -146,13 +154,21 @@ impl Fat32Image {
             if name == filename.to_lowercase() {
                 let cluster_hi = u16::from_le_bytes([entry_bytes[20], entry_bytes[21]]);
                 let cluster_lo = u16::from_le_bytes([entry_bytes[26], entry_bytes[27]]);
-                let size = u32::from_le_bytes([entry_bytes[28], entry_bytes[29], entry_bytes[30], entry_bytes[31]]);
-                
+                let size = u32::from_le_bytes([
+                    entry_bytes[28],
+                    entry_bytes[29],
+                    entry_bytes[30],
+                    entry_bytes[31],
+                ]);
+
                 let target_cluster = ((cluster_hi as u32) << 16) | (cluster_lo as u32);
 
                 let is_dir = (entry_bytes[11] & 0x10) != 0;
                 if is_dir {
-                    println!("Error: '{}' is a directory, cannot display contents.", filename);
+                    println!(
+                        "Error: '{}' is a directory, cannot display contents.",
+                        filename
+                    );
                     return Ok(());
                 }
 
@@ -176,7 +192,11 @@ impl Fat32Image {
         Ok(())
     }
 
-    pub fn find_sub_directory(&mut self, current_cluster: u32, dir_name: &str) -> io::Result<Option<u32>> {
+    pub fn find_sub_directory(
+        &mut self,
+        current_cluster: u32,
+        dir_name: &str,
+    ) -> io::Result<Option<u32>> {
         let offset = self.offset_from_cluster(current_cluster);
         self.file.seek(SeekFrom::Start(offset))?;
 
@@ -217,8 +237,45 @@ impl Fat32Image {
                     return Ok(None);
                 }
             }
-    }
+        }
         Ok(None)
+    }
+
+    pub fn resolve_path(
+        &mut self,
+        start_cluster: u32,
+        path: &str,
+    ) -> io::Result<(u32, Option<String>)> {
+        let (mut current_cluster, path_to_process) = if path.starts_with('/') {
+            (self.boot_sector.root_dir_cluster, &path[1..])
+        } else {
+            (start_cluster, path)
+        };
+
+        let parts: Vec<&str> = path_to_process
+            .split('/')
+            .filter(|s| !s.is_empty())
+            .collect();
+
+        if parts.is_empty() {
+            return Ok((current_cluster, None));
+        }
+
+        let (filename, parent_dirs) = parts.split_last().unwrap();
+
+        for dir_name in parent_dirs {
+            match self.find_sub_directory(current_cluster, dir_name)? {
+                Some(next_cluster) => current_cluster = next_cluster,
+                None => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::NotFound,
+                        format!("Dossier introuvable : {}", dir_name),
+                    ));
+                }
+            }
+        }
+
+        Ok((current_cluster, Some(filename.to_string())))
     }
 }
 
@@ -234,14 +291,14 @@ fn format_name(bytes: &[u8; 11]) -> String {
     //3. Assemble. If no extension, return name only
     if ext_str.is_empty() {
         name_str.to_lowercase()
-    }else {
+    } else {
         format!("{}.{}", name_str, ext_str).to_lowercase()
     }
 }
 
 fn main() -> io::Result<()> {
-    let image_path = "fat32.img"; 
-    
+    let image_path = "fat32.img";
+
     let mut fs = match Fat32Image::new(image_path) {
         Ok(img) => img,
         Err(e) => {
@@ -261,7 +318,7 @@ fn main() -> io::Result<()> {
 
         let mut input = String::new();
         io::stdin().read_line(&mut input)?;
-        
+
         let parts: Vec<&str> = input.trim().split_whitespace().collect();
 
         if parts.is_empty() {
@@ -269,37 +326,80 @@ fn main() -> io::Result<()> {
         }
 
         let command = parts[0];
-        let argument = if parts.len() > 1 { Some(parts[1]) } else { None };
+        let argument = if parts.len() > 1 {
+            Some(parts[1])
+        } else {
+            None
+        };
 
-match command {
+        match command {
             "ls" => {
-                if let Err(e) = fs.list_directory(current_cluster) {
-                    eprintln!("Erreur lors du listing : {}", e);
+                // Par défaut, on liste le dossier courant (si pas d'argument)
+                let target_path = argument.unwrap_or("");
+
+                // On utilise notre GPS pour trouver où aller
+                match fs.resolve_path(current_cluster, target_path) {
+                    Ok((parent_cluster, target_name)) => match target_name {
+                        None => {
+                            if let Err(e) = fs.list_directory(parent_cluster) {
+                                eprintln!("Erreur : {}", e);
+                            }
+                        }
+                        Some(name) => match fs.find_sub_directory(parent_cluster, &name)? {
+                            Some(dir_cluster) => {
+                                if let Err(e) = fs.list_directory(dir_cluster) {
+                                    eprintln!("Erreur : {}", e);
+                                }
+                            }
+                            None => {
+                                println!("'{}' n'est pas un dossier ou n'existe pas.", name);
+                            }
+                        },
+                    },
+                    Err(e) => eprintln!("Chemin invalide : {}", e),
                 }
             }
             "cat" => {
-                if let Some(filename) = argument {
-                    if let Err(e) = fs.cat_file(current_cluster, filename) {
-                        eprintln!("Erreur de lecture : {}", e);
+                if let Some(path) = argument {
+                    match fs.resolve_path(current_cluster, path) {
+                        Ok((parent_cluster, Some(filename))) => {
+                            if let Err(e) = fs.cat_file(parent_cluster, &filename) {
+                                eprintln!("Erreur de lecture : {}", e);
+                            }
+                        }
+                        Ok((_, None)) => {
+                            println!("Veuillez spécifier un fichier (pas un dossier).")
+                        }
+                        Err(e) => eprintln!("Chemin invalide : {}", e),
                     }
                 } else {
-                    println!("Usage : cat <nom_fichier>");
+                    println!("Usage : cat <chemin/vers/fichier>");
                 }
             }
             "cd" => {
-                if let Some(dirname) = argument {
-                    match fs.find_sub_directory(current_cluster, dirname) {
-                        Ok(Some(new_cluster)) => {
-                            current_cluster = new_cluster;
-                            println!("Dossier changé. Cluster actuel : {}", current_cluster);
+                if let Some(path) = argument {
+                    match fs.resolve_path(current_cluster, path) {
+                        Ok((parent_cluster, target_name)) => {
+                            match target_name {
+                                None => {
+                                    current_cluster = parent_cluster;
+                                    println!("Retour à la racine.");
+                                }
+                                Some(name) => {
+                                    match fs.find_sub_directory(parent_cluster, &name)? {
+                                        Some(new_cluster) => {
+                                            current_cluster = new_cluster;
+                                            println!("Dossier changé.");
+                                        }
+                                        None => println!("Dossier '{}' introuvable.", name),
+                                    }
+                                }
+                            }
                         }
-                        Ok(None) => {
-                            println!("Dossier '{}' introuvable.", dirname);
-                        }
-                        Err(e) => eprintln!("Erreur système : {}", e),
+                        Err(e) => eprintln!("Erreur : {}", e),
                     }
                 } else {
-                    println!("Usage : cd <nom_dossier>");
+                    println!("Usage : cd <chemin>");
                 }
             }
             "exit" | "quit" => {
