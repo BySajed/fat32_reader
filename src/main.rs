@@ -1,11 +1,14 @@
 /*Some help to code this project:
+* https://alonely0.github.io/blog/unions/
 * https://www.reddit.com/r/embedded/comments/1myrsqj/i_wrote_a_minimal_embedded_fat32_file_system/?tl=fr
 * https://www.reddit.com/r/rust/comments/9eyc21/noob_what_exactly_is_no_std_and_why_is_it_so/?tl=fr
 * https://docs.rs/hadris-fat/latest/hadris_fat/
 * https://crates.io/crates/fat32rs
+* https://github.com/Spxg/fat32
+* https://github.com/rafalh/rust-fatfs
 * and others github projects...
 *
-* Some help to debug:
+* Some (really big if we are honest) help to debug:
 * Github Copilot
 * Google Gemini
 */
