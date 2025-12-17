@@ -8,7 +8,7 @@
 * https://github.com/rafalh/rust-fatfs
 * and others github projects...
 *
-* Some (really big if we are honest) help to debug:
+* Some (really big if we are honest) help to debug and safety comment:
 * Github Copilot
 * Google Gemini
 */
@@ -29,6 +29,10 @@ use crate::fat32::volume::Fat32Volume;
 #[link(name = "c")]
 extern "C" {}
 
+/// # Safety
+/// This function relies on raw pointer arithmetic.
+/// The caller must ensure that `dest` and `src` are valid pointers,
+/// that they do not overlap, and that the memory regions have at least `n` bytes.
 #[no_mangle]
 pub unsafe extern "C" fn memcpy(dest: *mut u8, src: *const u8, n: usize) -> *mut u8 {
     let mut i = 0;
@@ -39,6 +43,9 @@ pub unsafe extern "C" fn memcpy(dest: *mut u8, src: *const u8, n: usize) -> *mut
     dest
 }
 
+/// # Safety
+/// The caller must ensure that `s` is a valid pointer to a memory region
+/// of at least `n` bytes.
 #[no_mangle]
 pub unsafe extern "C" fn memset(s: *mut u8, c: i32, n: usize) -> *mut u8 {
     let mut i = 0;
@@ -49,6 +56,9 @@ pub unsafe extern "C" fn memset(s: *mut u8, c: i32, n: usize) -> *mut u8 {
     s
 }
 
+/// # Safety
+/// The caller must ensure that `s1` and `s2` are valid pointers to memory regions
+/// of at least `n` bytes.
 #[no_mangle]
 pub unsafe extern "C" fn memcmp(s1: *const u8, s2: *const u8, n: usize) -> i32 {
     let mut i = 0;
@@ -73,9 +83,12 @@ struct LibcAllocator;
 
 unsafe impl GlobalAlloc for LibcAllocator {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        // SAFETY: calling libc malloc is safe if the standard library is present.
+        // We cast the result to u8 ptr as required by GlobalAlloc.
         libc::malloc(layout.size()) as *mut u8
     }
     unsafe fn dealloc(&self, ptr: *mut u8, _layout: Layout) {
+        // SAFETY: calling libc free is safe on a pointer previously allocated by malloc.
         libc::free(ptr as *mut c_void);
     }
 }
@@ -87,26 +100,35 @@ static ALLOCATOR: LibcAllocator = LibcAllocator;
 fn panic(_info: &PanicInfo) -> ! {
     let msg = "!!! KERNEL PANIC !!!\n";
     unsafe { 
+        // SAFETY: writing a constant string literal to stdout (fd 1) is safe.
         libc::write(1, msg.as_ptr() as *const c_void, msg.len());
+        // SAFETY: exit is a standard syscall to terminate the process.
         libc::exit(1) 
     };
 }
 
 fn sys_print(s: &str) {
     unsafe {
+        // SAFETY: s.as_ptr() points to valid memory of s.len(). 
+        // Writing to stdout (1) is a standard operation.
         libc::write(1, s.as_ptr() as *const c_void, s.len());
         libc::write(1, "\n".as_ptr() as *const c_void, 1);
     }
 }
 
 fn sys_print_raw(s: &str) {
-    unsafe { libc::write(1, s.as_ptr() as *const c_void, s.len()); }
+    unsafe { 
+        // SAFETY: s is a valid string slice, pointer and length are guaranteed valid.
+        libc::write(1, s.as_ptr() as *const c_void, s.len()); 
+    }
 }
 
 fn sys_read_line() -> String {
     let mut buffer = Vec::new();
     let mut c: [u8; 1] = [0];
     loop {
+        // SAFETY: We provide a valid mutable pointer to a stack allocated buffer of size 1.
+        // Reading from stdin (0) is safe.
         let n = unsafe { libc::read(0, c.as_mut_ptr() as *mut c_void, 1) };
         if n <= 0 { break; }
         if c[0] == b'\n' { break; }
@@ -117,17 +139,21 @@ fn sys_read_line() -> String {
 
 fn sys_open_rw(path: &str) -> i32 {
     let path_c = format!("{}\0", path);
+    // SAFETY: path_c is a null-terminated string created just above.
+    // Passing it to open is safe as long as the underlying system supports it.
     unsafe { libc::open(path_c.as_ptr() as *const i8, libc::O_RDWR) }
 }
 
 fn sys_read_all(fd: i32) -> Vec<u8> {
     unsafe {
+        // SAFETY: lseek is used to determine file size.
         let size = libc::lseek(fd, 0, libc::SEEK_END);
         libc::lseek(fd, 0, libc::SEEK_SET); 
         if size <= 0 { return Vec::new(); }
         
         let mut buffer = Vec::with_capacity(size as usize);
         buffer.set_len(size as usize); 
+        // SAFETY: We are reading into a buffer allocated with sufficient capacity.
         libc::read(fd, buffer.as_mut_ptr() as *mut c_void, size as usize);
         buffer
     }
@@ -135,6 +161,8 @@ fn sys_read_all(fd: i32) -> Vec<u8> {
 
 fn sys_write_all(fd: i32, data: &[u8]) {
     unsafe {
+        // SAFETY: We rewind the file descriptor and write the full data buffer.
+        // The pointer comes from a valid slice.
         libc::lseek(fd, 0, libc::SEEK_SET);
         libc::write(fd, data.as_ptr() as *const c_void, data.len());
     }
@@ -154,11 +182,15 @@ pub extern "C" fn main(_argc: isize, _argv: *const *const u8) -> isize {
     }
     sys_print("OK.");
 
+    // CHARGEMENT DISQUE
     let mut disk_memory = sys_read_all(fd);
     if disk_memory.is_empty() {
         sys_print("Error: Empty image.");
         return 1;
     }
+
+    // CRÉATION VOLUME
+    let mut volume = Fat32Volume::new(&mut disk_memory);
 
     loop {
         sys_print_raw("> ");
@@ -173,14 +205,20 @@ pub extern "C" fn main(_argc: isize, _argv: *const *const u8) -> isize {
              if start < input.len() { Some(&input[start..]) } else { None }
         } else { None };
 
-        let mut volume = Fat32Volume::new(&mut disk_memory);
-
         match command {
             "exit" | "quit" => break,
             "info" => sys_print(&volume.get_info()),
             "ls" => {
-                let files = volume.list_root();
+                let files = volume.list_current();
                 for f in files { sys_print(&f); }
+            }
+            "cd" => {
+                if let Some(dirname) = arg1 {
+                    match volume.change_directory(dirname) {
+                        Ok(_) => sys_print("Directory changed."),
+                        Err(e) => sys_print(e),
+                    }
+                } else { sys_print("Usage: cd <dirname>"); }
             }
             "cat" => {
                 if let Some(filename) = arg1 {
@@ -207,8 +245,14 @@ pub extern "C" fn main(_argc: isize, _argv: *const *const u8) -> isize {
     }
 
     sys_print("Saving...");
+    // Drop volume to release the mutable borrow on disk_memory
+    drop(volume); 
+    
     sys_write_all(fd, &disk_memory);
-    unsafe { libc::close(fd); }
+    unsafe { 
+        // SAFETY: Closing the file descriptor before exit is best practice.
+        libc::close(fd); 
+    }
     sys_print("Bye.");
     0
 }
